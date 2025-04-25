@@ -3,6 +3,8 @@ import sys
 import random
 import argparse
 import numpy as np
+import random
+import json
 
 import torch
 from utils.config import _C as cfg
@@ -86,6 +88,46 @@ def test(epoch, dataloader):
     print("\n| Test Epoch #%d\t Accuracy: %.2f\n" %(epoch, acc))
     return acc
 
+# PEROFRM PSEUDOLABELLING
+@torch.no_grad()
+def perform_pseudolabelling(dataloader):
+    model.eval()
+    tokenizer = clip.tokenize
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Encode candidate labels as text prompts
+    text_prompts = [f"a photo of a {label}" for label in candidate_labels]
+    text_tokens = tokenizer(text_prompts).to(device)
+    text_embeddings = model.clip.encode_text(text_tokens)  # shape: [num_labels, dim]
+    text_embeddings /= text_embeddings.norm(dim=-1, keepdim=True)
+
+    # Store pseudo-labels (same length as dataset)
+    pseudo_labels = torch.full((len(dataloader.dataset),), -1, dtype=torch.long)
+
+    for batch_idx, (inputs, _, _, index) in enumerate(dataloader):
+        inputs = inputs.to(device)
+        index = index.to(device)
+
+        # Only consider noisy samples
+        noisy_mask = total_clean_idx[index] == 0
+        if noisy_mask.sum() == 0:
+            continue
+
+        # Encode image features for noisy samples
+        image_features = model.clip.encode_image(inputs[noisy_mask])
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+
+        # Compute similarity with all candidate label embeddings
+        similarity = image_features @ text_embeddings.T  # shape: [batch_size, num_labels]
+
+        # Pick top-1 label (could add threshold filtering here)
+        top_labels = similarity.argmax(dim=1)
+
+        # Assign pseudo labels
+        pseudo_labels[index[noisy_mask]] = top_labels
+
+    return pseudo_labels
+    
 # ======== Data ========
 if cfg.dataset.startswith("cifar"):
     from dataloader import dataloader_cifar as dataloader
@@ -103,7 +145,6 @@ elif cfg.dataset == "tiny_imagenet":
     from dataloader import dataloader_tiny_imagenet as dataloader
     train_loader, _, test_loader = dataloader.build_loader(cfg)
 num_class = cfg.num_class
-
 
 # ======== Model ========
 if cfg.backbone == 'vit':
@@ -126,6 +167,17 @@ criterion = torch.nn.CrossEntropyLoss(reduction='none')
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, cfg.epochs)
 total_clean_idx = torch.load("./phase1/{}/{}.pt".format(cfg.dataset, cfg.noise_mode + str(cfg.noise_ratio)), weights_only = False)
 best_acc = 0
+
+# Load vocab.json
+with open('vocab.json', 'r') as f:
+    vocab = json.load(f)
+    
+# LOAD THE VOCABULARY INTO CANDIDATE LABELS IGNORING THE START AND END TOKENS
+candidate_labels = [token.replace('</w>', '') for token in list(vocab.keys())[:-2]]
+for i in range(10):
+    print(candidate_labels[random.randint(0, len(candidate_labels)-1)])
+    
+perform_pseudolabelling(train_loader)
 
 for epoch in range(1, cfg.epochs + 1):
     train_acc = train(epoch, train_loader)
