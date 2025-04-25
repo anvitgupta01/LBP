@@ -67,7 +67,7 @@ class cifar_dataset(Dataset):
                     noise_label = torch.load('./data/cifar-10/CIFAR-10_human.pt')
                     noise_label = list(noise_label['worse_label'])
                 else:
-                    noise_label = torch.load('./data/cifar-100/CIFAR-100_human.pt')
+                    noise_label = torch.load('./data/cifar-100/CIFAR-100_human.pt', weights_only = False)
                     noise_label = list(noise_label['noisy_label'])
                 for i in range(len(noise_label)):
                     noise_label[i] = int(noise_label[i])

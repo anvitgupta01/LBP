@@ -1,5 +1,5 @@
 import torch
-from clip import clip
+from .clip import clip
 from .CLIP import *
 
 def load_clip(cfg):

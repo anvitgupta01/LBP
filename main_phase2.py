@@ -124,7 +124,7 @@ else:
 model.cuda()
 criterion = torch.nn.CrossEntropyLoss(reduction='none')
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, cfg.epochs)
-total_clean_idx = torch.load("./phase1/{}/{}.pt".format(cfg.dataset, cfg.noise_mode + str(cfg.noise_ratio)))
+total_clean_idx = torch.load("./phase1/{}/{}.pt".format(cfg.dataset, cfg.noise_mode + str(cfg.noise_ratio)), weights_only = False)
 best_acc = 0
 
 for epoch in range(1, cfg.epochs + 1):
