@@ -79,8 +79,10 @@ def train(epoch, dataloader, pseudo_labels):
         correct += predicted.eq(targets).cpu().sum().item()
 
         sys.stdout.write('\r')
+        # sys.stdout.write('Epoch [%3d/%3d] Iter[%3d/%3d]\t loss: %.3f'
+        #         %( epoch, cfg.epochs, batch_idx+1, num_iter, loss.item()))
         sys.stdout.write('Epoch [%3d/%3d] Iter[%3d/%3d]\t loss: %.3f'
-                %( epoch, cfg.epochs, batch_idx+1, num_iter, loss.item()))
+                %( epoch, 15, batch_idx+1, num_iter, loss.item()))
         sys.stdout.flush()
 
     return 100.*correct/total
@@ -179,7 +181,8 @@ else:
     cfg.backbone == 'clip'
 model.cuda()
 criterion = torch.nn.CrossEntropyLoss(reduction='none')
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, cfg.epochs)
+# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, cfg.epochs)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 15)
 total_clean_idx = torch.load("./phase1/{}/{}.pt".format(cfg.dataset, cfg.noise_mode + str(cfg.noise_ratio)), weights_only = False)
 best_acc = 0
 
@@ -194,10 +197,12 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
 pseudo_labels = pseudo_label(train_loader, clip_model)
 
-for epoch in range(1, cfg.epochs + 1):
+# for epoch in range(1, cfg.epochs + 1):
+for epoch in range(1, 15 + 1):
     train_acc = train(epoch, train_loader, pseudo_labels)
     test_acc = test(epoch, test_loader)
     best_acc = max(best_acc, test_acc)
-    if epoch == cfg.epochs:
+    # if epoch == cfg.epochs:
+    if epoch == 15:
         print("Best Acc: %.2f Last Acc: %.2f" % (best_acc, test_acc))
     scheduler.step()
