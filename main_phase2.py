@@ -5,7 +5,11 @@ import argparse
 import numpy as np
 import random
 import json
-
+#---------------------------------------------
+from model.clip import clip
+from PIL import Image
+from torchvision import datasets, transforms
+#---------------------------------------------
 import torch
 from utils.config import _C as cfg
 from model import *
@@ -51,11 +55,22 @@ def train(epoch, dataloader):
 
     for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
         inputs, targets = inputs.cuda(), targets.cuda()
+
+        # Replace noisy targets with pseudo-labels
+        targets_new = targets.clone()  # Start with a copy of the targets
+        for i, current_idx in enumerate(index):
+            if total_clean_idx[current_idx] == 0:  # If it's noisy
+                # Replace the target with the pseudo-label (already computed)
+                if pseudo_labels[current_idx] == -1 or len(pseudo_labels) >= current_idex:
+                  print(f"Abort condition met for index: {current_idx}")
+                  sys.exit("Aborting program due to pseudo-label condition.")
+                targets_new[i] = pseudo_labels[current_idx]  # Use the corresponding pseudo-label
+        
         outputs = model(inputs)
         _, predicted = outputs.max(1)
 
-        loss_per_sample = criterion(outputs, targets)
-        loss = loss_per_sample[total_clean_idx[index]].mean()
+        loss_per_sample = criterion(outputs, targets_new)
+        loss = loss_per_sample.mean()
 
         loss.backward()
         optimizer.step()
@@ -88,46 +103,47 @@ def test(epoch, dataloader):
     print("\n| Test Epoch #%d\t Accuracy: %.2f\n" %(epoch, acc))
     return acc
 
-# PEROFRM PSEUDOLABELLING
 @torch.no_grad()
-def perform_pseudolabelling(dataloader):
+def pseudo_label(dataloader, model):
     model.eval()
-    tokenizer = clip.tokenize
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Encode candidate labels as text prompts
-    text_prompts = [f"a photo of a {label}" for label in candidate_labels]
-    text_tokens = tokenizer(text_prompts).to(device)
-    text_embeddings = model.clip.encode_text(text_tokens)  # shape: [num_labels, dim]
-    text_embeddings /= text_embeddings.norm(dim=-1, keepdim=True)
-
-    # Store pseudo-labels (same length as dataset)
-    pseudo_labels = torch.full((len(dataloader.dataset),), -1, dtype=torch.long)
-
-    for batch_idx, (inputs, _, _, index) in enumerate(dataloader):
-        inputs = inputs.to(device)
-        index = index.to(device)
-
-        # Only consider noisy samples
-        noisy_mask = total_clean_idx[index] == 0
-        if noisy_mask.sum() == 0:
-            continue
-
-        # Encode image features for noisy samples
-        image_features = model.clip.encode_image(inputs[noisy_mask])
-        image_features /= image_features.norm(dim=-1, keepdim=True)
-
-        # Compute similarity with all candidate label embeddings
-        similarity = image_features @ text_embeddings.T  # shape: [batch_size, num_labels]
-
-        # Pick top-1 label (could add threshold filtering here)
-        top_labels = similarity.argmax(dim=1)
-
-        # Assign pseudo labels
-        pseudo_labels[index[noisy_mask]] = top_labels
-
-    return pseudo_labels
+    count=0
+    # Initialize pseudo_labels with -1 for all samples
+    pseudo_labels = [-1] * len(dataloader.dataset)
     
+    # Iterate through the dataloader
+    for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
+        inputs = inputs.to(device)
+        
+        for j, current_idx in enumerate(index):
+            # Only process noisy samples (where total_clean_idx[current_idx] == 0)
+            if total_clean_idx[current_idx] == 0:
+                count+=1
+                print(f"Labelling Index Number: {current_idx.item()}")
+                
+                # Encode image features for noisy samples
+                image = inputs[j].unsqueeze(0).cuda()  # Add batch dimension
+                image_features = model.encode_image(image)
+                image_features /= image_features.norm(dim=-1, keepdim=True)
+
+                # Encode candidate labels as text prompts
+                text_prompts = candidate_labels
+                text_tokens = clip.tokenize(text_prompts).cuda()
+                text_features = model.encode_text(text_tokens)
+                text_features /= text_features.norm(dim=-1, keepdim=True)
+                
+                # Compute similarities
+                similarities = image_features @ text_features.T
+                max_similarity_idx = similarities.argmax().item()
+                max_similarity = similarities[0,max_similarity_idx].item()
+                best_class = candidate_labels[max_similarity_idx]
+                pseudo_labels[current_idx.item()] = max_similarity_idx
+                
+    print(f"Final Pseudo Labels are:")
+    print(pseudo_labels)
+    
+    print(f"Number of noisy labels are {count}")
+    return pseudo_labels
+
 # ======== Data ========
 if cfg.dataset.startswith("cifar"):
     from dataloader import dataloader_cifar as dataloader
@@ -168,16 +184,16 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, cfg.epochs)
 total_clean_idx = torch.load("./phase1/{}/{}.pt".format(cfg.dataset, cfg.noise_mode + str(cfg.noise_ratio)), weights_only = False)
 best_acc = 0
 
-# Load vocab.json
-with open('vocab.json', 'r') as f:
-    vocab = json.load(f)
-    
-# LOAD THE VOCABULARY INTO CANDIDATE LABELS IGNORING THE START AND END TOKENS
-candidate_labels = [token.replace('</w>', '') for token in list(vocab.keys())[:-2]]
+# LOAD vocab.json
+with open('class_map.json', 'r') as f:
+    class_map = json.load(f)
+candidate_labels = [class_name for class_name in list(class_map)]
 for i in range(10):
-    print(candidate_labels[random.randint(0, len(candidate_labels)-1)])
-    
-perform_pseudolabelling(train_loader)
+    print(candidate_labels[i])
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
+pseudo_label(train_loader, clip_model)
 
 for epoch in range(1, cfg.epochs + 1):
     train_acc = train(epoch, train_loader)
@@ -185,5 +201,4 @@ for epoch in range(1, cfg.epochs + 1):
     best_acc = max(best_acc, test_acc)
     if epoch == cfg.epochs:
         print("Best Acc: %.2f Last Acc: %.2f" % (best_acc, test_acc))
-
     scheduler.step()
