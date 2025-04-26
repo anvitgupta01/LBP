@@ -48,7 +48,7 @@ def set_seed():
 set_seed()
 
 # Train
-def train(epoch, dataloader):
+def train(epoch, dataloader, pseudo_labels):
     model.train()
     num_iter = (len(dataloader.dataset) // dataloader.batch_size) + 1
     correct, total = 0, 0
@@ -61,7 +61,7 @@ def train(epoch, dataloader):
         for i, current_idx in enumerate(index):
             if total_clean_idx[current_idx] == 0:  # If it's noisy
                 # Replace the target with the pseudo-label (already computed)
-                if pseudo_labels[current_idx] == -1 or len(pseudo_labels) >= current_idex:
+                if pseudo_labels[current_idx] == -1 or len(pseudo_labels) <= current_idx:
                   print(f"Abort condition met for index: {current_idx}")
                   sys.exit("Aborting program due to pseudo-label condition.")
                 targets_new[i] = pseudo_labels[current_idx]  # Use the corresponding pseudo-label
@@ -118,7 +118,6 @@ def pseudo_label(dataloader, model):
             # Only process noisy samples (where total_clean_idx[current_idx] == 0)
             if total_clean_idx[current_idx] == 0:
                 count+=1
-                print(f"Labelling Index Number: {current_idx.item()}")
                 
                 # Encode image features for noisy samples
                 image = inputs[j].unsqueeze(0).cuda()  # Add batch dimension
@@ -188,15 +187,15 @@ best_acc = 0
 with open('class_map.json', 'r') as f:
     class_map = json.load(f)
 candidate_labels = [class_name for class_name in list(class_map)]
-for i in range(10):
-    print(candidate_labels[i])
+# for i in range(10):
+#     print(candidate_labels[i])
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
-pseudo_label(train_loader, clip_model)
+pseudo_labels = pseudo_label(train_loader, clip_model)
 
 for epoch in range(1, cfg.epochs + 1):
-    train_acc = train(epoch, train_loader)
+    train_acc = train(epoch, train_loader, pseudo_labels)
     test_acc = test(epoch, test_loader)
     best_acc = max(best_acc, test_acc)
     if epoch == cfg.epochs:
