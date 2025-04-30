@@ -6,9 +6,11 @@ import numpy as np
 import random
 import json
 #---------------------------------------------
+import pickle
 from model.clip import clip
 from PIL import Image
 from torchvision import datasets, transforms
+import matplotlib.pyplot as plt
 #---------------------------------------------
 import torch
 from utils.config import _C as cfg
@@ -104,17 +106,18 @@ def test(epoch, dataloader):
     return acc
 
 @torch.no_grad()
-def pseudo_label(dataloader, model):
+def pseudo_label(dataloader, model, train_dataset):
     model.eval()
+
+    # To store the count of total noisy labels
     count=0
+    
     # Initialize pseudo_labels with -1 for all samples
     pseudo_labels = [-1] * len(dataloader.dataset)
-    dataset_labels = [-1] * len(dataloader.dataset)
 
     # Iterate through the dataloader
     for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
         inputs = inputs.to(device)
-        dataset_labels[index] = targets[index]
 
         for j, current_idx in enumerate(index):
             # Only process noisy samples (where total_clean_idx[current_idx] == 0)
@@ -139,17 +142,61 @@ def pseudo_label(dataloader, model):
                 best_class = candidate_labels[max_similarity_idx]
                 pseudo_labels[current_idx.item()] = max_similarity_idx
     
+    # File path to save the JSON object
+    file_path = 'psuedolabels.json'
+
+    # Write list to JSON file
+    with open(file_path, 'w') as f:
+        json.dump(pseudo_labels, f)
+
+    print(f"Pseudo Label List saved to {file_path}")
+
     accuracy = 0
-    for dataset_label, pseudo_label in enumerate(dataset_labels, pseudo_labels):
-        if(pseudo_label == -1):
-            accuracy+=(dataset_label == pseudo_label)
+    for idx, pseudo_label in enumerate(pseudo_labels):
+        if(pseudo_label != -1):
+            accuracy+=(train_data['fine_labels'][idx] == pseudo_label)
 
-    accuracy/=count
-    accuracy*=100
+    print(f"CORRECTLY LABELED IMAGES: {accuracy}")
+    print(f"TOTAL NUMBER OF NOISY DATA POINTS: {count}")
 
-    print(f"Accuaracy of pseudo_labelling: {accuracy:.2f}%\n")
+    accuracy = (float(accuracy)*100) / count
+
+    print(f"ACCURACY OF PSEUDO-LABELLING: {accuracy:.2f}%\n")
 
     return pseudo_labels
+
+
+# def pseudo_label_2(dataloader, device):
+#     i = 2
+#     flag = False
+#     # Iterate through the dataloader
+#     for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
+#         inputs = inputs.to(device)
+#         for j, current_idx in enumerate(index):
+#             if current_idx.item() == i:
+#                 print(inputs[j].shape)
+#                 input_image = inputs[j].cpu().numpy()  # Move image to CPU and convert to numpy array
+#                 input_image = input_image.transpose(1, 2, 0)  # Change shape to (32, 32, 3)
+#                 flag = True
+#                 break
+#         if flag == True:
+#             break
+
+#     # Plot and save the image
+#     if flag:
+#         plt.imshow(input_image)
+#         plt.title(f"Image {i}")  # Title or label can be added if required
+#         plt.axis('off')  # Hide axes
+        
+#         # Save the image in the root directory
+#         image_path = os.path.join(os.getcwd(), 'input_image.png')
+#         plt.savefig(image_path)  # Save the image as PNG
+#         plt.close()  # Close the plot to free memory
+#         print(f"Image saved at {image_path}")
+#     else:
+#         print("Image not found.")
+
+#     return input_image
 
 # ======== Data ========
 if cfg.dataset.startswith("cifar"):
@@ -198,9 +245,17 @@ candidate_labels = [class_name for class_name in list(class_map)]
 # for i in range(10):
 #     print(candidate_labels[i])
 
+# LOAD THE TRUE TRAIN DATASET
+def load_cifar100_file(filepath):
+    with open(filepath, 'rb') as f:
+        data_dict = pickle.load(f, encoding='latin1')
+    return data_dict
+train_data = load_cifar100_file('./data/cifar-100/train')
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
-pseudo_labels = pseudo_label(train_loader, clip_model)
+
+pseudo_labels = pseudo_label(train_loader, clip_model, train_data)
 
 for epoch in range(1, cfg.epochs + 1):
     train_acc = train(epoch, train_loader, pseudo_labels)
