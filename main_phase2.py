@@ -109,11 +109,13 @@ def pseudo_label(dataloader, model):
     count=0
     # Initialize pseudo_labels with -1 for all samples
     pseudo_labels = [-1] * len(dataloader.dataset)
-    
+    dataset_labels = [-1] * len(dataloader.dataset)
+
     # Iterate through the dataloader
     for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
         inputs = inputs.to(device)
-        
+        dataset_labels[index] = targets[index]
+
         for j, current_idx in enumerate(index):
             # Only process noisy samples (where total_clean_idx[current_idx] == 0)
             if total_clean_idx[current_idx] == 0:
@@ -136,11 +138,17 @@ def pseudo_label(dataloader, model):
                 max_similarity = similarities[0,max_similarity_idx].item()
                 best_class = candidate_labels[max_similarity_idx]
                 pseudo_labels[current_idx.item()] = max_similarity_idx
-                
-    print(f"Final Pseudo Labels are:")
-    print(pseudo_labels)
     
-    print(f"Number of noisy labels are {count}")
+    accuracy = 0
+    for dataset_label, pseudo_label in enumerate(dataset_labels, pseudo_labels):
+        if(pseudo_label == -1):
+            accuracy+=(dataset_label == pseudo_label)
+
+    accuracy/=count
+    accuracy*=100
+
+    print(f"Accuaracy of pseudo_labelling: {accuracy:.2f}%\n")
+
     return pseudo_labels
 
 # ======== Data ========
