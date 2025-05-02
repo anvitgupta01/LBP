@@ -50,11 +50,11 @@ def set_seed():
 set_seed()
 
 # Train
-def train(epoch, dataloader, pseudo_labels):
+def train(epoch, dataloader, pseudo_labels, point_filter):
     model.train()
     num_iter = (len(dataloader.dataset) // dataloader.batch_size) + 1
     correct, total = 0, 0
-
+    
     for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
         inputs, targets = inputs.cuda(), targets.cuda()
 
@@ -110,47 +110,53 @@ def pseudo_label(dataloader, model, train_dataset):
     model.eval()
 
     # To store the count of total noisy labels
-    count=0
+    count=10557
     
     # Initialize pseudo_labels with -1 for all samples
     point_filter = [1] * len(dataloader.dataset) 
     pseudo_labels = [-1] * len(dataloader.dataset)
 
-    # Iterate through the dataloader
-    for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
-        inputs = inputs.to(device)
+    point_filter = np.array(point_filter)
 
-        for j, current_idx in enumerate(index):
-            # Only process noisy samples (where total_clean_idx[current_idx] == 0)
-            if total_clean_idx[current_idx] == 0:
-                count+=1
-                
-                # Encode image features for noisy samples
-                image = inputs[j].unsqueeze(0).cuda()  # Add batch dimension
-                image_features = model.encode_image(image)
-                image_features /= image_features.norm(dim=-1, keepdim=True)
+    # # Iterate through the dataloader
+    # for batch_idx, (inputs, targets, _, index) in enumerate(dataloader):
+    #     inputs = inputs.to(device)
 
-                # Encode candidate labels as text prompts
-                text_prompts = candidate_labels
-                text_tokens = clip.tokenize(text_prompts).cuda()
-                text_features = model.encode_text(text_tokens)
-                text_features /= text_features.norm(dim=-1, keepdim=True)
+    #     for j, current_idx in enumerate(index):
+    #         # Only process noisy samples (where total_clean_idx[current_idx] == 0)
+    #         if total_clean_idx[current_idx] == 0:
+    #             count+=1
                 
-                # Compute similarities
-                similarities = image_features @ text_features.T
-                max_similarity_idx = similarities.argmax().item()
-                max_similarity = similarities[0,max_similarity_idx].item()
-                best_class = candidate_labels[max_similarity_idx]
-                pseudo_labels[current_idx.item()] = max_similarity_idx
+    #             # Encode image features for noisy samples
+    #             image = inputs[j].unsqueeze(0).cuda()  # Add batch dimension
+    #             image_features = model.encode_image(image)
+    #             image_features /= image_features.norm(dim=-1, keepdim=True)
+
+    #             # Encode candidate labels as text prompts
+    #             text_prompts = candidate_labels
+    #             text_tokens = clip.tokenize(text_prompts).cuda()
+    #             text_features = model.encode_text(text_tokens)
+    #             text_features /= text_features.norm(dim=-1, keepdim=True)
+                
+    #             # Compute similarities
+    #             similarities = image_features @ text_features.T
+    #             max_similarity_idx = similarities.argmax().item()
+    #             max_similarity = similarities[0,max_similarity_idx].item()
+    #             best_class = candidate_labels[max_similarity_idx]
+    #             pseudo_labels[current_idx.item()] = max_similarity_idx
     
-    # File path to save the JSON object
-    file_path = 'psuedolabels.json'
+    # # File path to save the JSON object
+    # file_path = 'psuedolabels.json'
 
-    # Write list to JSON file
-    with open(file_path, 'w') as f:
-        json.dump(pseudo_labels, f)
+    # # Write list to JSON file
+    # with open(file_path, 'w') as f:
+    #     json.dump(pseudo_labels, f)
 
-    print(f"Pseudo Label List saved to {file_path}")
+    # Open and load the JSON file
+    with open('psuedolabels.json', 'r') as f:
+        pseudo_labels = json.load(f)
+
+    # print(f"Pseudo Label List saved to {file_path}")
 
     accuracy = 0
     for idx, pseudo_label in enumerate(pseudo_labels):
@@ -169,7 +175,7 @@ def pseudo_label(dataloader, model, train_dataset):
 
     print(f"ACCURACY OF PSEUDO-LABELLING: {accuracy:.2f}%\n")
 
-    return pseudo_labels
+    return pseudo_labels, point_filter
 
 
 # def pseudo_label_2(dataloader, device):
@@ -261,11 +267,10 @@ train_data = load_cifar100_file('./data/cifar-100/train')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
 
-point_filter = []
-pseudo_labels = pseudo_label(train_loader, clip_model, train_data)
+pseudo_labels, point_filter = pseudo_label(train_loader, clip_model, train_data)
 
 for epoch in range(1, cfg.epochs + 1):
-    train_acc = train(epoch, train_loader, pseudo_labels)
+    train_acc = train(epoch, train_loader, pseudo_labels, point_filter)
     test_acc = test(epoch, test_loader)
     best_acc = max(best_acc, test_acc)
     if epoch == cfg.epochs:
