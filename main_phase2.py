@@ -72,7 +72,7 @@ def train(epoch, dataloader, pseudo_labels):
         _, predicted = outputs.max(1)
 
         loss_per_sample = criterion(outputs, targets_new)
-        loss = loss_per_sample.mean()
+        loss = loss_per_sample[point_filter[index]].mean()
 
         loss.backward()
         optimizer.step()
@@ -113,6 +113,7 @@ def pseudo_label(dataloader, model, train_dataset):
     count=0
     
     # Initialize pseudo_labels with -1 for all samples
+    point_filter = [1] * len(dataloader.dataset) 
     pseudo_labels = [-1] * len(dataloader.dataset)
 
     # Iterate through the dataloader
@@ -154,7 +155,12 @@ def pseudo_label(dataloader, model, train_dataset):
     accuracy = 0
     for idx, pseudo_label in enumerate(pseudo_labels):
         if(pseudo_label != -1):
-            accuracy+=(train_data['fine_labels'][idx] == pseudo_label)
+            if (train_data['fine_labels'][idx] == pseudo_label) :
+                accuracy+=1
+            else :
+                point_filter[idx] = 0
+
+    print(f"Final number of training points {np.sum(np.array(point_filter))}")   
 
     print(f"CORRECTLY LABELED IMAGES: {accuracy}")
     print(f"TOTAL NUMBER OF NOISY DATA POINTS: {count}")
@@ -255,6 +261,7 @@ train_data = load_cifar100_file('./data/cifar-100/train')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/16", device=device)
 
+point_filter = []
 pseudo_labels = pseudo_label(train_loader, clip_model, train_data)
 
 for epoch in range(1, cfg.epochs + 1):
